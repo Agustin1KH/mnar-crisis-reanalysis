@@ -1,0 +1,47 @@
+# Raw data — do not commit (copyright, size)
+data/raw/*
+!data/raw/.gitkeep
+
+# R session files
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+
+# renv
+renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
+renv/staging/
+
+# Output — regenerate from scripts, don't version
+output/tables/*
+output/figures/*
+!output/tables/.gitkeep
+!output/figures/.gitkeep
+
+# OS cruft
+.DS_Store
+Thumbs.db
+__MACOSX/
+._*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Memo build artifacts
+memo/*.aux
+memo/*.log
+memo/*.out
+memo/*.bbl
+memo/*.blg
+memo/*.toc
+memo/*.synctex.gz
+memo/*.fdb_latexmk
+memo/*.fls
