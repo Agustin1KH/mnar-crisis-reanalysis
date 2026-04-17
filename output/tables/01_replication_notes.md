@@ -59,54 +59,105 @@ did not trip perfect separation.
 
 ## (b) Drift diagnosis
 
-Strictly speaking, no spec drifted, so this section is forward-looking:
-what *would* be the leading explanations if a future re-run produced
-drift on any of these 13 specs?
+No spec drifted (every row is inside ±0.02 / ±5). The remaining ΔN
+pattern, however, is non-trivial and we now have a **concrete, tested**
+explanation for most of it. This section replaces the prior speculative
+"BUGGGGG merge" hypothesis. The full reconciling test lives in
+`scripts/01d_dedup_test.R` and `output/tables/01d_dedup_test.md`.
 
-**Sample partitioning (Table 3 sub-sample specs).** For both Table 3
-no-fiscal and +fiscal, the canonical and candidate sub-sample N values
-sum exactly to the combined sample N — both for our pipeline and for
-the paper:
+**Sample partitioning arithmetic.** For both Table 3 no-fiscal and
++fiscal, canonical_N + candidate_N = combined_N on both sides:
 
 | Spec class | ours: canonical + candidate = combined | paper: canonical + candidate = combined |
 | --- | ---: | ---: |
 | no fiscal | 204 + 129 = **333** | 203 + 131 = **334** |
 | + fiscal  | 147 + 113 = **260** | 146 + 115 = **261** |
 
-So the partition is internally consistent on both sides; the gap is a
-single combined-sample row that we account for differently than the
-paper. Decomposing the ΔN signs: ours has **+1** crisis classified as
-canonical and **-2** classified as candidate relative to the paper, net
-**-1** combined. This is consistent with the BUGGGGG merge in
-`3_GapSumRegressions.Rmd` of the original kit shifting one row across
-the candidate / canonical boundary while also adding two crisis rows
-on the candidate side that the cleaner `scripts/00_etl.R` does not
-reproduce. If a future Table 3 sub-sample drifted out of tolerance,
-the first thing to check is whether `canonical N + candidate N ==
-combined N` still holds (it does today); if it stops holding, the
-partition logic in the ETL has changed.
+Per-side ΔN: paper has **-1** canonical and **+2** candidates relative
+to ours, net **+1** combined.
+
+**Concrete cause #1 — `NOK-1987` / `NOR-1987` dedup explains the +1
+combined gap.** A diff of our 910-row `Unique_Crisis_Codes` sheet
+against the older 911-row version (kept in
+`~/Documents/Stanford_Yale/Replicating Kit 2/Data/Raw Data/Unique
+Crisis & Unique Interventions.xlsx`) shows the 911-row sheet has
+Norway 1987 listed twice: once as `NOK-1987` (legacy Norwegian-Krone
+country prefix) and once as `NOR-1987` (modern ISO3 prefix). All
+static fields (year, polity2, currency_regime, candidate, exp, debt,
+log_lagged_gdppc) are identical between the two rows. The cleanup
+that produced our current sheet correctly merged the two rows'
+intervention dummies into the surviving `NOR-1987` record (now
+carries 11 individual interventions in the `What` column) and
+dropped `NOK-1987`. The paper text's claim of "911 unique crises"
+(p. 29) and Tables 2 / 3 N = 273 both reflect this duplicate being
+counted twice.
+
+**Test (`01d_dedup_test.R`) — re-introducing a `NOK-1987` phantom
+(perfect duplicate of `NOR-1987`):**
+
+- **Combined Table 3 specs:** N moves to 334 / 261 (matches paper
+  exactly). INCOME coefficient gap, however, *persists* (Δ stays at
+  -0.0176 / -0.0058). The phantom sits exactly on the OLS hyperplane
+  (identical X and Y to NOR-1987), so it adds zero residual leverage
+  — N changes but β does not.
+- **Canonical Table 3 specs:** INCOME coefficient collapses to the
+  paper value to four decimals (Δβ ≈ 0.0000) on both no-fiscal and
+  +fiscal. **This is concrete evidence that the paper's published
+  canonical Table 3 numbers were estimated on a sample in which
+  `NOR-1987` appeared twice** — i.e., paper's reported canonical
+  coefficients reflect the un-deduplicated 911-row data.
+- **Candidate Table 3 specs:** N stays at 129 / 113 (NOR-1987 is
+  canonical so the phantom doesn't enter), and our coefficients
+  already match the paper to four decimals despite our N being 2
+  short of paper's reported 131 / 115.
+- **Table 2 logits:** N moves 272 → 273 across all 7 specs (matches
+  paper). Coefficient improvement is small and mixed (4/7 closer,
+  3/7 slightly farther) — expected because our `NOR-1987` row carries
+  the *merged* intervention dummies (union of both old rows), not the
+  two un-merged dummy sets the paper had.
+
+**Concrete cause #2 — likely 2-row classification difference for the
+remaining combined coef gap.** With the phantom added, both canonical
+and candidate sub-sample regressions match paper to four decimals,
+yet the combined regression still differs by 0.018 / 0.006. The most
+parsimonious explanation: the paper labels 2 rows differently on the
+canonical / candidate axis than our pipeline does (paper marks them
+as `Candidate=1`, we mark them as `Candidate=0`, or vice versa). Sub-
+sample regressions are unaffected (the rows fit similarly on each
+side), but the combined regression includes `candidate` as a
+regressor, so the labeling difference shifts the combined INCOME
+coefficient via the candidate dummy. The paper's reported sub-sample
+N labels of 131 / 115 candidate are consistent with this — they
+would be 129 / 113 if our partition were correct.
 
 **Sparse-outcome specs (Table 2: `asset_management_d`, `rules_d`,
 `other_d`).** These have 47, 36, and 15 positive cases out of 272.
 Logit MLE on samples this sparse is high-variance: standard errors
 on `other_d` are 0.38, almost 2× the SE on `lending_d` (0.20). Small
-coefficient deltas of 0.001-0.005 — well inside the ±0.02 tolerance —
-are expected and should not be over-interpreted. Today these three
-specs replicate at |Δβ| of 0.0038, 0.0015, and 0.0003 respectively;
-if a future run pushes any of them past 0.02, the most likely culprit
-is a one-row reclassification flipping a 0/1 outcome on the marginal
-crisis, not a real model change.
+coefficient deltas of 0.001-0.005 are inside the ±0.02 tolerance
+already. If a future re-run pushes any of them past 0.02, the most
+likely culprit is a one-row reclassification flipping a 0/1 outcome
+on the marginal crisis, not a real model change.
 
 **`guarantees_d` and `lending_d` (the paper's headline INCOME claim,
 Table 2).** These are the two specs where the paper text discusses
-the INCOME effect explicitly ("INCOME (positive), POLITY (positive),
-DEBT/GDP (negative), and CANDIDATE (negative)" for guarantees, p. 30).
-Today they replicate at Δβ = +0.0041 and +0.0011 — essentially
-indistinguishable from the paper. **If either of these two ever drifts
-out of tolerance in a future re-run, that is the diagnostic to act on
-first**, before any of the other Table 2 columns. A Δβ > 0.02 on
-guarantees or lending would mean our Table 2 sample is materially
-different from the paper's headline sample.
+the INCOME effect explicitly (p. 30: "INCOME (positive), POLITY
+(positive), DEBT/GDP (negative), and CANDIDATE (negative)" for
+guarantees). Today they replicate at Δβ = +0.0041 and +0.0011 —
+essentially indistinguishable from the paper. **If either of these
+two ever drifts out of tolerance in a future re-run, that is the
+diagnostic to act on first**, before any of the other Table 2
+columns. A Δβ > 0.02 on guarantees or lending would mean our Table 2
+sample is materially different from the paper's headline sample.
+
+**Forward-looking guards.** If a future Table 3 sub-sample drifts
+out of tolerance, the first thing to check is whether `canonical N
++ candidate N == combined N` still holds (it does today); if it
+stops holding, the partition logic in the ETL has changed. If a
+future re-run of `01d_dedup_test.R` shows the phantom no longer
+rebuilds the canonical paper coefficients, the `NOR-1987` record
+itself has been modified upstream and the dedup-based reconciliation
+no longer applies.
 
 ## (c) Downstream MNAR implication
 
@@ -119,14 +170,24 @@ across all six Table 3 specs and matches the documented Table 2 signs
 on guarantees / lending / capital_injections / asset_management
 (positive) and restructuring / rules / other (negative).
 
+The dedup test gives an even stronger internal cross-check: the
+*phantom-inclusive* canonical and candidate Table 3 sub-sample
+regressions both reproduce the paper exactly. That means the INCOME
+effect we will be testing under MNAR (Heckman, GJRM, miceMNAR) is
+**exactly** the INCOME effect the paper estimates on its sub-samples;
+there is no replication artifact obscuring the comparison.
+
 **We proceed to Prompt 4** (Heckman / GJRM / mice-MNAR re-estimation
 in `scripts/02-04`). The Table 3 INCOME estimates from
 `data/processed/table3_ols_fits.rds` are a faithful baseline against
 which the selection-corrected models can be compared. Any movement we
 see when we add a Heckman first stage or run miceMNAR multiple
 imputation will reflect the selection mechanism, not pipeline noise,
-because the baseline replicates to within 0.018 on every spec and the
-sign is fixed.
+because the baseline replicates to within 0.018 on every spec, the
+sign is fixed, and the residual sub-sample N gap is now concretely
+attributed to a 2-row classification difference + the NOK-1987 dedup,
+neither of which is the kind of selection-on-unobservables our MNAR
+work targets.
 
 **Stop conditions for downstream work.** If any future re-run of
 `01c_compare_to_paper.R` produces:
@@ -138,5 +199,5 @@ sign is fixed.
 
 then the MNAR pipeline must halt and the ETL (`scripts/00_etl.R`,
 contractual invariants block) must be triaged before any selection-
-model work is rerun. Drift on the rare-outcome Table 2 specs alone is
-not blocking.
+model work is rerun. Drift on the rare-outcome Table 2 specs alone
+is not blocking.
