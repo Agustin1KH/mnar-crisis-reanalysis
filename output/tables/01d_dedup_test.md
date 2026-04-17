@@ -78,3 +78,77 @@ Canonical and Candidate sub-sample regressions both reproduce the paper
 exactly, which is the strongest possible internal cross-check that the
 INCOME effect we will be testing under MNAR is the same INCOME effect
 the paper estimates.
+
+## Appendix A. Audit methodology: which key columns catch the NOK/NOR dedup?
+
+If you were handed only the older 911-row `Unique_Crisis_Codes` sheet 
+and asked to confirm primary-key uniqueness, here is what each plausible 
+check returns:
+
+| Check | Catches NOR-1987 dupe? | Why |
+|---|---|---|
+| `duplicated(\`Crisis Code\`)` (legacy keying) | NO  | The two duplicate rows have *distinct* `Crisis Code` values (`NOK-1987` vs `NOR-1987`). The legacy keying treats them as separate. |
+| `duplicated(real_crisis_code)` (ISO3 key) | **YES** | `real_crisis_code` is `"NOR-1987"` on both rows — a one-line `duplicated()` call surfaces it immediately. |
+| `duplicated(<entire row>)` | NO  | The intervention dummy columns differ between the two rows (one has 2 dummies tagged, the other has 7), so no row is byte-identical to another. |
+| `count(real_crisis_code, year)` then `filter(n > 1)` | **YES** | Equivalent to the `duplicated(real_crisis_code)` check; flags exactly the NOR-1987 collision. |
+
+**Recommendation for going forward.** Treat `real_crisis_code` (or, in 
+the current 910-sheet, the ISO3-keyed `Crisis Code` column) as the 
+*primary* uniqueness key for any crisis-level integrity check. Treat 
+the legacy-prefix `Crisis Code` column in the 911-sheet as a *secondary* 
+label that may contain currency-prefix variants (NOK/NOR, BG/BUG, FR/FRA, 
+GB/UK, GI/GN, GT/GUA per the conversions table). Whole-row `duplicated()` 
+is *not* sufficient: dummy-column inconsistency between two rows for the 
+same crisis can disguise the duplication.
+
+## Appendix B. Intervention-level context for the NOR-1987 / NOK-1987 dedup
+
+The two 911-sheet rows for Norway 1987 each aggregated a *subset* of 
+the four distinct policy responses to the Norwegian banking crisis 
+(start year 1987 in the M&S keying convention):
+
+| Master Crisis Code | Date | Bank / event | `What` | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `NOR-1987` | Mar 1988 | Sunnmorsbanken failure | AHCI, OLG, RES | Privately-funded SBGF guarantees Sunnmorsbanken liabilities, capital support via capital certificates, facilitates mergers. |
+| **`NOK-1987`** | 1988 | **Norion Bank fraud** | AG, RES | Norion Bank put under public receivership; Norges Bank de-facto reimburses depositors and absorbs an NOK 47M loss. |
+| `NOR-1987` | Q4 1990 | GBIF created | BBLA, AG | Government Bank Insurance Fund capitalized at NOK 5 BN to insure depositors via special loans to private-sector guarantee funds. |
+| `NOR-1987` | Oct 1991 | GBIIF / nationalizations | BBCI | Government Bank Investment Fund created to inject equity capital; Fokus Bank and Christiana Bank nationalized. |
+
+All four are responses to the *same* underlying crisis episode (the 
+Norwegian banking crisis of 1987-1993, classified as one event by 
+Reinhart-Rogoff, Schularick-Taylor, Laeven-Valencia, and the M&S text 
+itself). The Norion Bank intervention was keyed under the legacy 
+currency-prefix `NOK-` while the other three were keyed under the 
+ISO3-prefix `NOR-`; this is a cataloging inconsistency, not a separate 
+crisis. The 911-sheet's `Unique_Crisis_Codes` faithfully aggregated 
+each Crisis Code key separately and ended up with two crisis-level rows 
+for what is conceptually one crisis. The cleanup that produced our 910-
+sheet correctly merged them: the surviving `NOR-1987` row's `What` 
+field carries the union of all four interventions 
+`("AG, AG, AHCI, AHCI, AHLA, ASG, BBCI, BBLA, OLG, RES, RES")`, and 
+its dummy columns are the union of all four intervention-type flags 
+(`GUARANTEES_d`, `LENDING_d`, `CAPITAL_INJECTIONS_d`, `RESTRUCTURING_d`, 
+`AHLA_d`, `BBLA_d`, `BBCI_d` all `= 1`).
+
+**Why the dedup is correct even from a Table 2 perspective.** The Table 
+2 logits use crisis-level intervention dummies defined as "any 
+intervention of this type during the crisis." The Norion Bank events's 
+dummies (`GUARANTEES_d`, `RESTRUCTURING_d`) were already flagged on the 
+main `NOR-1987` row from the Sunnmorsbanken response (`RESTRUCTURING_d`) 
+and the GBIF response (`GUARANTEES_d`). Aggregating Norion Bank into the 
+main row therefore does not add any new dummy that wasn't already 1. The 
+dedup is invariant for the Table 2 specification.
+
+**Out-of-scope: intervention-level analysis.** If a future re-analysis 
+ever moves to intervention-level rather than crisis-level (one row per 
+policy event, with a count or intensity outcome), Norion Bank is a 
+distinct observation that should be carried separately. That is not in 
+scope for this MNAR re-analysis: Tables 2 and 3 in M&S are crisis-level, 
+and Heckman / GJRM / mice-MNAR in `scripts/02-04` operate on the same 
+crisis-level frame.
+
+## See also
+
+- `scripts/01e_duplicate_audit.R` and `output/tables/01e_duplicate_audit.md` 
+  for a five-check systematic audit confirming no other NOK/NOR-style 
+  duplicates lurk in the 910-row analysis dataset.
