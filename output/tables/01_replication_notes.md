@@ -64,6 +64,10 @@ pattern, however, is non-trivial and we now have a **concrete, tested**
 explanation for most of it. This section replaces the prior speculative
 "BUGGGGG merge" hypothesis. The full reconciling test lives in
 `scripts/01d_dedup_test.R` and `output/tables/01d_dedup_test.md`.
+A systematic audit for any further repeated rows beyond NOK-1987 lives
+in `scripts/01e_duplicate_audit.R` and
+`output/tables/01e_duplicate_audit.md`; **no other duplicates were
+found**, so the dedup discussion below is complete.
 
 **Sample partitioning arithmetic.** For both Table 3 no-fiscal and
 +fiscal, canonical_N + candidate_N = combined_N on both sides:
