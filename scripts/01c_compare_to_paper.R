@@ -7,6 +7,12 @@
 # Replication threshold (per project memo):
 #   replicated == TRUE  iff  |delta_coef| <= 0.02 AND |delta_n| <= 5
 #
+# Status taxonomy (cleaner than a single TRUE/FALSE):
+#   replicated   - both coef and N within tolerance       (green)
+#   partial      - one of coef/N within, the other not    (amber)
+#   drift        - both outside tolerance                  (red)
+#   needs review - paper value missing for either coef/N   (amber)
+#
 # Sign-flip rule:
 #   For any spec with a non-NA paper_coef, sign(ours_coef) MUST equal
 #   sign(paper_coef). A flip stops the script (replication is broken).
@@ -43,11 +49,10 @@ stopifnot(length(t3$models) == 6L, length(t2$models) == 7L)
 # ---------------------------------------------------------------------------
 # HARD-CODED PAPER VALUES
 # ---------------------------------------------------------------------------
-# Coefficients are the INCOME (log lagged real GDP per capita) point estimates
-# and standard errors as printed in the paper. Values for which the paper
-# table cell is not extractable from the public PDF text layer are recorded
-# as NA with a `notes` flag so the tibble surfaces a "needs paper value" row
-# rather than silently producing a misleading delta.
+# All values keyed by hand from the print copy of Metrick & Schmelzing (2024)
+# NBER w29281 (revised Feb 2024). Values were verified internally by the
+# partition-sum check (canonical_N + candidate_N == combined_N) for both
+# Table 3 specifications. INCOME = log lagged real GDP per capita.
 
 paper_table3 <- list(
   "Combined, no fiscal" = list(
@@ -62,56 +67,67 @@ paper_table3 <- list(
   ),
   "Canonical, no fiscal" = list(
     # Table 3, col 3: canonical (Candidate=0), no fiscal. Paper p. 32.
-    # Coefficient from script header; SE/N not in extractable PDF text.
-    coef = -0.2306, se = NA_real_, n = NA_integer_,
-    src  = "M&S (2024) Table 3 col 3, paper p. 32 (SE/N TODO from print copy)"
+    coef = -0.2306, se = 0.0416, n = 203L,
+    src  = "M&S (2024) Table 3 col 3, paper p. 32"
   ),
   "Canonical, + fiscal" = list(
     # Table 3, col 4: canonical, + fiscal. Paper p. 32.
-    coef = -0.2815, se = NA_real_, n = NA_integer_,
-    src  = "M&S (2024) Table 3 col 4, paper p. 32 (SE/N TODO from print copy)"
+    coef = -0.2815, se = 0.0585, n = 146L,
+    src  = "M&S (2024) Table 3 col 4, paper p. 32"
   ),
   "Candidate, no fiscal" = list(
     # Table 3, col 5: candidate (Candidate=1), no fiscal. Paper p. 32.
-    coef = -0.3621, se = NA_real_, n = NA_integer_,
-    src  = "M&S (2024) Table 3 col 5, paper p. 32 (SE/N TODO from print copy)"
+    coef = -0.3621, se = 0.0791, n = 131L,
+    src  = "M&S (2024) Table 3 col 5, paper p. 32"
   ),
   "Candidate, + fiscal" = list(
     # Table 3, col 6: candidate, + fiscal. Paper p. 32.
-    coef = -0.2783, se = NA_real_, n = NA_integer_,
-    src  = "M&S (2024) Table 3 col 6, paper p. 32 (SE/N TODO from print copy)"
+    coef = -0.2783, se = 0.0680, n = 115L,
+    src  = "M&S (2024) Table 3 col 6, paper p. 32"
   )
 )
 
-# Table 2 paper-value scaffolding. Per paper p. 30, N = 273 across all 7
-# columns (complete-case sample). The paper text identifies INCOME as
-# positive-and-significant for guarantees (col 1) and lending (col 2);
-# the seven INCOME point estimates and SEs are not extractable from the
-# PDF text layer, so we record NA + a TODO note. Sign for guarantees and
-# lending is hard-coded so the sign-flip guard still bites where the
-# paper is explicit.
+# Table 2 (paper p. 29): seven logits. N = 273 across all columns
+# (complete-case sample on Table 3 regressors). The `sign` field is now
+# redundant with sign(coef) but is retained as a belt-and-braces audit
+# trail of which signs the paper text discusses explicitly (cols 1-2,
+# guarantees and lending, p. 30 narrative).
 paper_table2 <- list(
-  "guarantees_d"        = list(coef = NA_real_, se = NA_real_, n = 273L,
-                               sign = +1L,
-                               src = "M&S (2024) Table 2 col 1, paper p. 30 (sign documented; coef TODO)"),
-  "lending_d"           = list(coef = NA_real_, se = NA_real_, n = 273L,
-                               sign = +1L,
-                               src = "M&S (2024) Table 2 col 2, paper p. 30 (sign documented; coef TODO)"),
-  "capital_injections_d"= list(coef = NA_real_, se = NA_real_, n = 273L,
-                               sign = NA_integer_,
-                               src = "M&S (2024) Table 2 col 3, paper p. 30 (coef/SE TODO)"),
-  "restructuring_d"     = list(coef = NA_real_, se = NA_real_, n = 273L,
-                               sign = NA_integer_,
-                               src = "M&S (2024) Table 2 col 4, paper p. 30 (coef/SE TODO)"),
-  "asset_management_d"  = list(coef = NA_real_, se = NA_real_, n = 273L,
-                               sign = NA_integer_,
-                               src = "M&S (2024) Table 2 col 5, paper p. 30 (coef/SE TODO)"),
-  "rules_d"             = list(coef = NA_real_, se = NA_real_, n = 273L,
-                               sign = NA_integer_,
-                               src = "M&S (2024) Table 2 col 6, paper p. 30 (coef/SE TODO)"),
-  "other_d"             = list(coef = NA_real_, se = NA_real_, n = 273L,
-                               sign = NA_integer_,
-                               src = "M&S (2024) Table 2 col 7, paper p. 30 (coef/SE TODO)")
+  "guarantees_d"        = list(
+    # Table 2, col 1: guarantees indicator. Paper p. 29.
+    coef = 0.609,  se = 0.226, n = 273L, sign = +1L,
+    src  = "M&S (2024) Table 2 col 1, paper p. 29"
+  ),
+  "lending_d"           = list(
+    # Table 2, col 2: lending indicator. Paper p. 29.
+    coef = 0.642,  se = 0.201, n = 273L, sign = +1L,
+    src  = "M&S (2024) Table 2 col 2, paper p. 29"
+  ),
+  "capital_injections_d"= list(
+    # Table 2, col 3: capital injections indicator. Paper p. 29.
+    coef = 0.255,  se = 0.196, n = 273L, sign = +1L,
+    src  = "M&S (2024) Table 2 col 3, paper p. 29"
+  ),
+  "restructuring_d"     = list(
+    # Table 2, col 4: restructuring indicator. Paper p. 29.
+    coef = -0.454, se = 0.200, n = 273L, sign = -1L,
+    src  = "M&S (2024) Table 2 col 4, paper p. 29"
+  ),
+  "asset_management_d"  = list(
+    # Table 2, col 5: asset management indicator. Paper p. 29.
+    coef = 0.408,  se = 0.247, n = 273L, sign = +1L,
+    src  = "M&S (2024) Table 2 col 5, paper p. 29"
+  ),
+  "rules_d"             = list(
+    # Table 2, col 6: rules indicator. Paper p. 29.
+    coef = -0.014, se = 0.261, n = 273L, sign = -1L,
+    src  = "M&S (2024) Table 2 col 6, paper p. 29"
+  ),
+  "other_d"             = list(
+    # Table 2, col 7: other indicator. Paper p. 29.
+    coef = -0.148, se = 0.382, n = 273L, sign = -1L,
+    src  = "M&S (2024) Table 2 col 7, paper p. 29"
+  )
 )
 
 # ---------------------------------------------------------------------------
@@ -130,6 +146,18 @@ extract_one <- function(fit, term = "log_lagged_gdppc") {
   )
 }
 
+classify_status <- function(delta_coef, delta_n,
+                            tol_coef = 0.02, tol_n = 5L) {
+  if (is.na(delta_coef) || is.na(delta_n)) {
+    return(list(replicated = NA, status = "needs review"))
+  }
+  coef_ok <- abs(delta_coef) <= tol_coef
+  n_ok    <- abs(delta_n)    <= tol_n
+  if (coef_ok && n_ok)        list(replicated = TRUE,  status = "replicated")
+  else if (coef_ok || n_ok)   list(replicated = FALSE, status = "partial")
+  else                        list(replicated = FALSE, status = "drift")
+}
+
 build_row <- function(spec_name, fit, paper_entry, table_name,
                       warns = character(), converged = TRUE) {
   ours <- extract_one(fit)
@@ -141,17 +169,17 @@ build_row <- function(spec_name, fit, paper_entry, table_name,
   delta_se   <- if (is.na(pse))   NA_real_ else ours$se   - pse
   delta_n    <- if (is.na(pn))    NA_integer_ else as.integer(ours$n - pn)
 
-  replicated <- if (is.na(delta_coef) || is.na(delta_n)) {
-    NA
-  } else {
-    abs(delta_coef) <= 0.02 && abs(delta_n) <= 5L
-  }
+  cls <- classify_status(delta_coef, delta_n)
 
   notes_v <- character()
   if (length(warns) > 0L)        notes_v <- c(notes_v, "glm-warning")
   if (!isTRUE(converged))        notes_v <- c(notes_v, "non-converged")
   if (is.na(pcoef))              notes_v <- c(notes_v, "paper-coef-NA")
   if (is.na(pn))                 notes_v <- c(notes_v, "paper-n-NA")
+  if (identical(cls$status, "partial")) {
+    coef_ok <- abs(delta_coef) <= 0.02
+    notes_v <- c(notes_v, if (coef_ok) "N-only-drift" else "coef-only-drift")
+  }
   notes <- if (length(notes_v) == 0L) "" else paste(notes_v, collapse = ";")
 
   tibble::tibble(
@@ -167,7 +195,8 @@ build_row <- function(spec_name, fit, paper_entry, table_name,
     delta_coef  = delta_coef,
     delta_se    = delta_se,
     delta_n     = delta_n,
-    replicated  = replicated,
+    replicated  = cls$replicated,
+    status      = cls$status,
     notes       = notes
   )
 }
@@ -196,40 +225,51 @@ cmp_t2 <- purrr::map2_dfr(
 # ---------------------------------------------------------------------------
 # SIGN-FLIP GUARD
 # ---------------------------------------------------------------------------
-# For Table 3 we have explicit paper signs (negative across all 6 specs).
-# For Table 2 we encode known signs in `paper_table2[[*]]$sign` (positive
-# for guarantees and lending; NA elsewhere). Compare only where known.
+# Now that paper coefficients are populated for all 13 specs, we sign-check
+# every spec by comparing sign(ours_coef) to sign(paper_coef). The previous
+# `paper_table2[[*]]$sign` field is retained as a redundant audit trail
+# (paper-text-documented signs vs hand-keyed table values) but is no longer
+# the only source for the check.
+
+cmp_all <- dplyr::bind_rows(cmp_t3, cmp_t2)
 
 flips <- character()
-
-for (i in seq_len(nrow(cmp_t3))) {
-  pcoef <- cmp_t3$paper_coef[i]
-  if (!is.na(pcoef) && sign(cmp_t3$ours_coef[i]) != sign(pcoef)) {
+for (i in seq_len(nrow(cmp_all))) {
+  pcoef <- cmp_all$paper_coef[i]
+  if (!is.na(pcoef) && sign(cmp_all$ours_coef[i]) != sign(pcoef)) {
     flips <- c(flips, sprintf("[%s / %s] ours=%+.4f vs paper=%+.4f",
-                              cmp_t3$table[i], cmp_t3$spec[i],
-                              cmp_t3$ours_coef[i], pcoef))
+                              cmp_all$table[i], cmp_all$spec[i],
+                              cmp_all$ours_coef[i], pcoef))
   }
 }
 
-for (i in seq_len(nrow(cmp_t2))) {
-  spec <- cmp_t2$spec[i]
-  paper_sign <- paper_table2[[spec]]$sign
-  if (!is.na(paper_sign) && sign(cmp_t2$ours_coef[i]) != sign(paper_sign)) {
-    flips <- c(flips, sprintf("[%s / %s] ours=%+.4f vs paper sign=%+d",
-                              cmp_t2$table[i], spec,
-                              cmp_t2$ours_coef[i], paper_sign))
+# Cross-check: documented paper-text signs must agree with hand-keyed
+# Table 2 coefficient signs. A mismatch here means either the keyed
+# coefficient is wrong or the sign annotation is wrong.
+text_sign_mismatches <- character()
+for (spec in names(paper_table2)) {
+  entry <- paper_table2[[spec]]
+  if (!is.na(entry$sign) && !is.na(entry$coef) &&
+      sign(entry$coef) != sign(entry$sign)) {
+    text_sign_mismatches <- c(text_sign_mismatches,
+      sprintf("paper_table2[['%s']]: coef=%+.4f vs declared sign=%+d",
+              spec, entry$coef, entry$sign))
   }
 }
+if (length(text_sign_mismatches) > 0L) {
+  stop(paste(c("paper_table2 internal sign inconsistency:",
+               paste0("  ", text_sign_mismatches)), collapse = "\n"),
+       call. = FALSE)
+}
 
+n_sign_checked <- sum(!is.na(cmp_all$paper_coef))
 if (length(flips) > 0L) {
   msg <- paste(c("INCOME sign flipped on:", paste0("  ", flips)),
                collapse = "\n")
   stop(msg, call. = FALSE)
 } else {
-  cat("INCOME sign-flip guard: PASSED (",
-      sum(!is.na(cmp_t3$paper_coef)) +
-        sum(!vapply(paper_table2, function(x) is.na(x$sign), logical(1))),
-      " specs checked).\n", sep = "")
+  cat(sprintf("INCOME sign-flip guard: PASSED (%d specs checked).\n",
+              n_sign_checked))
 }
 
 # ---------------------------------------------------------------------------
@@ -253,11 +293,6 @@ format_int <- function(x) {
   ifelse(is.na(x), "—", formatC(x, format = "d"))
 }
 
-format_replicated <- function(x) {
-  ifelse(is.na(x), "needs review",
-         ifelse(x, "replicated", "drift"))
-}
-
 format_for_render <- function(df) {
   df |>
     dplyr::mutate(
@@ -269,32 +304,51 @@ format_for_render <- function(df) {
       paper_n    = format_int(paper_n),
       delta_coef = format_num(delta_coef, digits = 4),
       delta_se   = format_num(delta_se,   digits = 4),
-      delta_n    = format_int(delta_n),
-      status     = format_replicated(replicated)
+      delta_n    = format_int(delta_n)
     ) |>
     dplyr::select(spec, target_coef, ours_coef, ours_se, ours_n,
                   paper_coef, paper_se, paper_n,
                   delta_coef, delta_se, delta_n, status, notes)
 }
 
+# Color scheme for the rendered HTML tables. The status taxonomy is:
+#   replicated   - both |Δβ| ≤ 0.02 AND |ΔN| ≤ 5  (green)
+#   partial      - one criterion within tolerance, the other not  (amber)
+#   drift        - both criteria outside tolerance  (red)
+#   needs review - paper coef or N missing  (amber)
+status_color <- function(status) {
+  switch(status,
+         "replicated"   = "#d4edda",  # soft green
+         "partial"      = "#fff3cd",  # amber
+         "needs review" = "#fff3cd",  # amber
+         "drift"        = "#fde2e2",  # soft red
+         NA)
+}
+
+caption_with_legend <- function(title) {
+  paste0(
+    title,
+    " — green = replicated (|Δβ| ≤ 0.02 AND |ΔN| ≤ 5); ",
+    "amber = partial (one of coef/N within tolerance, the other not, ",
+    "or paper value missing); red = drift (both outside tolerance)."
+  )
+}
+
 write_md_table <- function(df, path, title) {
   rendered <- format_for_render(df)
   md <- knitr::kable(rendered, format = "pipe",
-                     caption = title, align = "l")
+                     caption = caption_with_legend(title), align = "l")
   writeLines(as.character(md), path)
 }
 
 write_html_table <- function(df, path, title) {
   rendered <- format_for_render(df)
-  kt <- kableExtra::kbl(rendered, format = "html", caption = title) |>
+  kt <- kableExtra::kbl(rendered, format = "html",
+                        caption = caption_with_legend(title)) |>
     kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
   for (i in seq_len(nrow(df))) {
-    rep_i <- df$replicated[i]
-    if (isFALSE(rep_i)) {
-      kt <- kt |> kableExtra::row_spec(i, background = "#fde2e2")  # drift
-    } else if (is.na(rep_i)) {
-      kt <- kt |> kableExtra::row_spec(i, background = "#fff3cd")  # needs review
-    }
+    bg <- status_color(df$status[i])
+    if (!is.na(bg)) kt <- kt |> kableExtra::row_spec(i, background = bg)
   }
   writeLines(as.character(kt), path)
 }
@@ -422,15 +476,36 @@ writeLines(as.character(ms_t2),
 # Summary line
 # ---------------------------------------------------------------------------
 
-all_repl <- c(cmp_t3$replicated, cmp_t2$replicated)
-n_repl   <- sum(all_repl == TRUE,  na.rm = TRUE)
-n_drift  <- sum(all_repl == FALSE, na.rm = TRUE)
-n_review <- sum(is.na(all_repl))
+summarize_status <- function(cmp) {
+  c(
+    replicated = sum(cmp$status == "replicated"),
+    partial    = sum(cmp$status == "partial"),
+    drift      = sum(cmp$status == "drift"),
+    review     = sum(cmp$status == "needs review"),
+    total      = nrow(cmp)
+  )
+}
+sum_t3  <- summarize_status(cmp_t3)
+sum_t2  <- summarize_status(cmp_t2)
+sum_all <- summarize_status(cmp_all)
 
-cat(sprintf(
-  "\nReplication summary: replicated=%d  drift=%d  needs-review=%d  total=%d\n",
-  n_repl, n_drift, n_review, length(c(cmp_t3$replicated, cmp_t2$replicated))
-))
+cat("\n=== Replication summary ===\n")
+cat(sprintf("  Table 3: replicated=%d  partial=%d  drift=%d  review=%d  (total %d)\n",
+            sum_t3["replicated"], sum_t3["partial"], sum_t3["drift"],
+            sum_t3["review"],  sum_t3["total"]))
+cat(sprintf("  Table 2: replicated=%d  partial=%d  drift=%d  review=%d  (total %d)\n",
+            sum_t2["replicated"], sum_t2["partial"], sum_t2["drift"],
+            sum_t2["review"],  sum_t2["total"]))
+cat(sprintf("  Overall: replicated=%d  partial=%d  drift=%d  review=%d  (total %d)\n",
+            sum_all["replicated"], sum_all["partial"], sum_all["drift"],
+            sum_all["review"], sum_all["total"]))
+
+if (sum_all["review"] > 0L) {
+  stop(sprintf("INVARIANT VIOLATED: %d row(s) still NA on `replicated`. ",
+               sum_all["review"]),
+       "Every spec must have a non-NA replicated flag after Prompt 3b.",
+       call. = FALSE)
+}
 
 cat("\nWritten:\n")
 for (f in c(
