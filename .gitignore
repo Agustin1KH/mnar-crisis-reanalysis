@@ -45,3 +45,4 @@ memo/*.toc
 memo/*.synctex.gz
 memo/*.fdb_latexmk
 memo/*.fls
+memo/*.xdv
