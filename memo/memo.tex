@@ -37,15 +37,14 @@
 % Compress bibliography vertical spacing.
 \setlength{\bibsep}{2pt plus 0.3ex}
 
-\title{Selection-Robustness of the {INCOME} Effect on Crisis Outcomes:\\
-       An MNAR Re-analysis of \citet{metrick2024}}
+\title{Missing-Data Sensitivity of the INCOME Effect in\\
+       \citet{metrick2024}}
 \author{Agust\'in Kupfer\thanks{All numerical claims in this memo are
   sourced from the analysis pipeline in
   \texttt{scripts/00\_etl.R}--\texttt{scripts/05\_sensitivity.R} and the
   rendered tables under \texttt{output/tables/} (referenced below by
   filename only). Replication code and data-construction notes are in
-  the project's \texttt{README.md} and \texttt{INSTALL\_NOTES.md}.
-  Correspondence: \texttt{agustind.kupferh@\,...}}}
+  the project's \texttt{README.md} and \texttt{INSTALL\_NOTES.md}.}}
 \date{April 2026}
 
 \begin{document}
@@ -158,8 +157,9 @@ The selection equation is
 with $r_i = 1$ if crisis $i$ has all Table~2/3 regressors observed.
 The \emph{shadow variable} $n^{\text{chron}}$ counts how many of the four
 canonical chronologies (Reinhart--Rogoff, Schularick--Taylor,
-Laeven--Valencia, Bordo--Vassard--Xenofontos) list crisis $i$, and ranges
-over $\{0, 1, 2, 3, 4\}$. The argument for excludability is that
+Laeven--Valencia, and Baron--Verner--Xiong, \citealp{baron2021}) list
+crisis $i$, and ranges over $\{0, 1, 2, 3, 4\}$. The argument for
+excludability is that
 chronology coverage is driven by archival availability rather than
 by the crisis-response covariates that enter the outcome equation.
 
@@ -376,14 +376,17 @@ Outcome & Paper PD & MAR PD & MNAR PD &
 \end{tabular}
 \end{table}
 
-Three patterns are immediate. First, on the four outcomes where the
-paper's logit is statistically distinguishable from zero
-(\texttt{guarantees\_d}, \texttt{lending\_d},
+Three patterns are immediate. First, on four of six interpretable
+outcomes (\texttt{guarantees\_d}, \texttt{lending\_d},
 \texttt{capital\_injections\_d}, \texttt{restructuring\_d}), the
 paper's PD is more extreme in absolute value than \emph{both} the
 MICE-MAR and MICE-MNAR pooled estimates---the complete-case selection
 inflates the magnitude of the binary INCOME effect relative to
-imputation-recovered estimates. Second, on \texttt{guarantees\_d} and
+imputation-recovered estimates. (Three of these four are statistically
+distinguishable from zero in the paper's Table~2:
+\texttt{guarantees\_d}, \texttt{lending\_d}, and
+\texttt{restructuring\_d}; \texttt{capital\_injections\_d} is not, but
+its point estimate follows the same directional pattern.) Second, on \texttt{guarantees\_d} and
 \texttt{lending\_d} (the two outcomes where the shadow variable is
 in-sample-violated) the MAR/MNAR comparison itself diverges by $22\%$
 and $43\%$, so the parametric MNAR adjustment is sensitive to the
@@ -393,8 +396,8 @@ outcomes; without parametric assumptions the data cannot reject ``no
 INCOME effect'' on any of them. The honest binary-side claim is
 therefore: the paper's INCOME log-odds are consistent with the data
 and lie inside the no-assumption bounds on all six outcomes, but are
-precision-overstated relative to what either the imputation or the
-partial-identification approach is willing to support.
+systematically larger in magnitude than either the imputation-based
+pooled estimates or the no-assumption bounds would support.
 
 % =============================================================================
 \section{Discussion}
