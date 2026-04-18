@@ -200,6 +200,65 @@ resulting analysis numerics.
 
 ---
 
+## 6. `miceMNAR::mice.impute.hecknorm` is broken with current `GJRM` (use `hecknorm2step`)
+
+### Error (running `scripts/04_mice_mnar.R` with `method = "hecknorm"`)
+
+```
+Error in eval(predvars, data, env) : object 'ry' not found
+Calls: mice ... model.frame.default -> is.data.frame -> as.data.frame -> cbind
+```
+
+### Cause
+
+`miceMNAR::mice.impute.hecknorm` calls
+`GJRM::copulaSampleSel(data = as.data.frame(cbind(ry, y, x)), ...)` with the
+`data` argument as an inline expression. `copulaSampleSel` constructs its
+model frame via `match.call()` + `eval(mf)`, and the eval scope
+(`parent.frame()` of `copulaSampleSel`) cannot resolve `ry` / `y` / `x`
+when `copulaSampleSel` is itself called from inside another function. The
+call works in isolation (from `.GlobalEnv`) but fails inside `mice`'s
+imputation harness. Verified against pinned versions
+`miceMNAR 1.0.2` (2018-08-27, archive only) + `GJRM 0.2.6.8` (2024).
+
+### Workaround (applied)
+
+Use `miceMNAR::mice.impute.hecknorm2step` instead. It is the package-internal
+two-step Heckman imputer (Galimard et al. 2018, JSCS) implementing the same
+MNAR adjustment via `sampleSelection::heckit2fit` (no scope bug). The two
+methods are asymptotically equivalent up to ML-vs-2-step efficiency.
+
+`scripts/04_mice_mnar.R` invokes `hecknorm2step` for all five MNAR-imputed
+continuous variables; the fallback is logged in
+`output/tables/04_mice_fallback_log.md`.
+
+---
+
+## 7. `currency_regime` MNAR multinomial: no method available, fall back to `polyreg`
+
+### Observation
+
+The IRR 15-point fine FX-regime classification (`currency_regime`) is 54%
+missing in the post-1800 sample and is multi-level categorical (15 levels,
+treated as numeric in the original paper). `miceMNAR` provides only
+`hecknorm` (continuous) and `heckprob` (binary); there is no `heckpoly`
+for multi-level categorical MNAR imputation.
+
+### Workaround (applied)
+
+Per Phase 4a spec, `scripts/04_mice_mnar.R` falls back to
+`mice`'s `polyreg` (multinomial logit, MAR conditional on observables) for
+`currency_regime` in both the MNAR and MAR imputation arms. Same treatment
+in both arms keeps the MAR-vs-MNAR comparison purely about the continuous
+variables. Logged in `output/tables/04_mice_fallback_log.md`.
+
+A Heckman-style ordinal extension (e.g. via `sampleSelection`'s bivariate
+ordered-probit selection) would close the gap but is out of scope for
+Phase 4a; could be added in Phase 5 if memo writeup demands MNAR
+treatment of `currency_regime` specifically.
+
+---
+
 ## Verification
 
 ```
