@@ -64,6 +64,16 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
+# Phase-2 SHADOW_VAR. Section 2 (rho-grid) and Section 3 (exclusion swap)
+# both use the active shadow in the selection equation; cached fits and
+# all output paths get namespaced when SHADOW_VAR is set explicitly.
+SHADOW       <- resolve_shadow_var()
+SHADOW_VAR   <- SHADOW$var
+SHADOW_SUB   <- SHADOW$subdir
+cli::cli_alert_info("Phase-2 SHADOW_VAR = {.val {SHADOW_VAR}} \\
+                    ({if (SHADOW$is_default) 'default' else 'explicit'}); \\
+                    output subdir = {.path {if (nzchar(SHADOW_SUB)) SHADOW_SUB else '(legacy flat)'}}.")
+
 # Outcomes: 6 interpretable binaries (other_d excluded; see header).
 binary_interpretable <- c(
   "guarantees_d", "lending_d", "capital_injections_d",
@@ -88,9 +98,12 @@ df_raw <- read.csv(here::here("data", "processed", "analysis_data.csv"),
 df18   <- subset(df_raw, year >= 1800)
 
 t2_log    <- readRDS(here::here("data", "processed", "table2_logit_fits.rds"))
-heck_fits <- readRDS(here::here("data", "processed", "heckman_fits.rds"))
-mids_mnar <- readRDS(here::here("data", "processed", "mice_mnar.rds"))
-mids_mar  <- readRDS(here::here("data", "processed", "mice_mar.rds"))
+heck_fits <- readRDS(phase2_cache_path("heckman_fits.rds", SHADOW_SUB,
+                                        ensure_dir = FALSE))
+mids_mnar <- readRDS(phase2_cache_path("mice_mnar.rds", SHADOW_SUB,
+                                        ensure_dir = FALSE))
+mids_mar  <- readRDS(phase2_cache_path("mice_mar.rds",  SHADOW_SUB,
+                                        ensure_dir = FALSE))
 
 # =============================================================================
 # SECTION 1: Horowitz-Manski worst-case bounds on binary outcomes
@@ -243,13 +256,15 @@ cli::cli_h2("Section 2: rho-grid tipping-point on gap_sum spec A")
 # cached MLE at rho = MLE.
 out_regs <- c("candidate", "log_lagged_gdppc", "polity", "currency_regime",
               "year", "gap_sum")
-sel_regs <- c("candidate", "year", "maddison_priority", "n_chron_clean")
+sel_regs <- c("candidate", "year", "maddison_priority", SHADOW_VAR)
 df_h <- df18[!(df18$r == 1 & !complete.cases(df18[, out_regs])), ]
 df_h <- df_h[complete.cases(df_h[, sel_regs]), ]
 stopifnot(nrow(df_h) == 774L)
 
-X_sel    <- model.matrix(~ candidate + year + maddison_priority + n_chron_clean,
-                         data = df_h)
+X_sel    <- model.matrix(
+  as.formula(paste("~ candidate + year + maddison_priority +", SHADOW_VAR)),
+  data = df_h
+)
 df_h_r1  <- df_h[df_h$r == 1, , drop = FALSE]
 X_out_r1 <- model.matrix(~ candidate + log_lagged_gdppc + polity +
                            currency_regime + year, data = df_h_r1)
@@ -347,16 +362,17 @@ out_eq_a <- gap_sum ~ candidate + log_lagged_gdppc + polity +
                        currency_regime + year
 
 swap_configs <- list(
-  a = list(label = "(a) n_chron_clean only",
-           sel_eq = r ~ candidate + year + n_chron_clean,
+  a = list(label  = sprintf("(a) %s only", SHADOW_VAR),
+           sel_eq = as.formula(paste("r ~ candidate + year +", SHADOW_VAR)),
            note   = "drops maddison_priority; new configuration not in Phase 3d"),
-  b = list(label = "(b) maddison_priority only",
+  b = list(label  = "(b) maddison_priority only",
            sel_eq = r ~ candidate + year + maddison_priority,
-           note   = "drops n_chron_clean; equivalent to Phase 3d Falsif 1"),
-  c = list(label = "(c) both n_chron_clean + maddison_priority",
-           sel_eq = r ~ candidate + year + maddison_priority + n_chron_clean,
+           note   = sprintf("drops %s; equivalent to Phase 3d Falsif 1", SHADOW_VAR)),
+  c = list(label  = sprintf("(c) both %s + maddison_priority", SHADOW_VAR),
+           sel_eq = as.formula(paste(
+             "r ~ candidate + year + maddison_priority +", SHADOW_VAR)),
            note   = "Phase 2 baseline / Phase 3d Original"),
-  d = list(label = "(d) neither (year shared with outcome eq)",
+  d = list(label  = "(d) neither (year shared with outcome eq)",
            sel_eq = r ~ candidate + year,
            note   = "no exclusion restriction; identification via bivariate normality alone (= Phase 3d Falsif 2)")
 )
@@ -415,8 +431,9 @@ sens_cache <- list(
     timestamp = format(Sys.time(), tz = "UTC", usetz = TRUE)
   )
 )
-saveRDS(sens_cache, here::here("data", "processed", "sensitivity_fits.rds"))
-cli::cli_alert_success("Cached {.path data/processed/sensitivity_fits.rds}")
+sens_path <- phase2_cache_path("sensitivity_fits.rds", SHADOW_SUB)
+saveRDS(sens_cache, sens_path)
+cli::cli_alert_success("Cached {.path {sens_path}}")
 
 # =============================================================================
 # OUTPUT 1: 05_manski_bounds.md
@@ -539,8 +556,9 @@ para_manski <- c(
 )
 
 manski_md <- c(manski_md, "", para_manski)
-writeLines(manski_md, here::here("output", "tables", "05_manski_bounds.md"))
-cli::cli_alert_success("Wrote {.path output/tables/05_manski_bounds.md}")
+manski_path <- phase2_output_path("05_manski_bounds.md", SHADOW_SUB)
+writeLines(manski_md, manski_path)
+cli::cli_alert_success("Wrote {.path {manski_path}}")
 
 # =============================================================================
 # OUTPUT 2: 05_rho_grid_sensitivity.md
@@ -651,8 +669,9 @@ para_rgs <- c(
   ""
 )
 rgs_md <- c(rgs_md, "", para_rgs)
-writeLines(rgs_md, here::here("output", "tables", "05_rho_grid_sensitivity.md"))
-cli::cli_alert_success("Wrote {.path output/tables/05_rho_grid_sensitivity.md}")
+rgs_path <- phase2_output_path("05_rho_grid_sensitivity.md", SHADOW_SUB)
+writeLines(rgs_md, rgs_path)
+cli::cli_alert_success("Wrote {.path {rgs_path}}")
 
 # =============================================================================
 # OUTPUT 3: 05_exclusion_swap.md
@@ -750,8 +769,12 @@ para_es <- c(
   ""
 )
 es_md <- c(es_md, "", para_es)
-writeLines(es_md, here::here("output", "tables", "05_exclusion_swap.md"))
-cli::cli_alert_success("Wrote {.path output/tables/05_exclusion_swap.md}")
+if (SHADOW_VAR != "n_chron_clean") {
+  es_md <- gsub("n_chron_clean", SHADOW_VAR, es_md, fixed = TRUE)
+}
+es_path <- phase2_output_path("05_exclusion_swap.md", SHADOW_SUB)
+writeLines(es_md, es_path)
+cli::cli_alert_success("Wrote {.path {es_path}}")
 
 # =============================================================================
 # OUTPUT 4: 05_sensitivity_interpretation.md (final synthesis)
@@ -954,8 +977,11 @@ interp_lines <- c(
   sec2_lines,
   sec3_lines
 )
-writeLines(interp_lines,
-           here::here("output", "tables", "05_sensitivity_interpretation.md"))
-cli::cli_alert_success("Wrote {.path output/tables/05_sensitivity_interpretation.md}")
+if (SHADOW_VAR != "n_chron_clean") {
+  interp_lines <- gsub("n_chron_clean", SHADOW_VAR, interp_lines, fixed = TRUE)
+}
+interp_path <- phase2_output_path("05_sensitivity_interpretation.md", SHADOW_SUB)
+writeLines(interp_lines, interp_path)
+cli::cli_alert_success("Wrote {.path {interp_path}}")
 
 cli::cli_h1("Phase 5 sensitivity complete")

@@ -23,6 +23,14 @@ output/figures/*
 !output/tables/.gitkeep
 !output/figures/.gitkeep
 
+# Sandbox handoff scratch (Python validation + task spec; not pipeline)
+files (1)/
+
+# Phase-2 per-shadow rendered outputs regenerate from the drivers +
+# committed caches; only the headline stitched tables are force-added.
+output/tables/phase2_shadow_*/
+output/figures/phase2_shadow_*/
+
 # OS cruft
 .DS_Store
 Thumbs.db

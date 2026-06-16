@@ -45,6 +45,16 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
+# Phase-2 SHADOW_VAR. The whole point of 03a is to test the credibility of
+# the Heckman exclusion variable, so the *active* shadow gets exercised
+# instead of n_chron_clean when SHADOW_VAR is set explicitly.
+SHADOW       <- resolve_shadow_var()
+SHADOW_VAR   <- SHADOW$var
+SHADOW_SUB   <- SHADOW$subdir
+cli::cli_alert_info("Phase-2 SHADOW_VAR = {.val {SHADOW_VAR}} \\
+                    ({if (SHADOW$is_default) 'default' else 'explicit'}); \\
+                    output subdir = {.path {if (nzchar(SHADOW_SUB)) SHADOW_SUB else '(legacy flat)'}}.")
+
 # -- data --------------------------------------------------------------------
 df <- read.csv(here::here("data", "processed", "analysis_data.csv"),
                stringsAsFactors = FALSE)
@@ -63,8 +73,11 @@ cli::cli_h1("Exclusion-restriction credibility (n_chron_clean)")
 cli::cli_h2("(a) OLS of n_chron_clean on severity proxies + covariates")
 
 m_a <- lm(
-  n_chron_clean ~ year + log_lagged_gdppc + polity + currency_regime +
-                  maddison_priority + candidate,
+  as.formula(paste(
+    SHADOW_VAR,
+    "~ year + log_lagged_gdppc + polity + currency_regime +",
+    "maddison_priority + candidate"
+  )),
   data = df
 )
 sm_a <- summary(m_a)
@@ -80,7 +93,10 @@ cat(sprintf("\nN = %d (NA-listwise drop)\nR^2 = %.4f   adjusted R^2 = %.4f\n",
 # -- (b) Within-era correlation ----------------------------------------------
 cli::cli_h2("(b) Within-era corr(n_chron_clean, severity proxies)")
 
-# Use Pearson; robust to integer outcome (n_chron_clean in 0..4) on this N.
+# Use Pearson; robust to integer outcome (shadow var in 0..4) on this N.
+# Pull the active shadow column into a local vector so the SHADOW_VAR
+# parameterisation doesn't propagate into every cor() call.
+df$.shadow <- df[[SHADOW_VAR]]
 era_corr <- df |>
   dplyr::group_by(era) |>
   dplyr::summarise(
@@ -88,12 +104,12 @@ era_corr <- df |>
     n_with_gap    = sum(!is.na(gap_sum)),
     cor_chron_gap = if (sum(!is.na(gap_sum)) >= 5L)
                       suppressWarnings(stats::cor(
-                        n_chron_clean, gap_sum,
+                        .shadow, gap_sum,
                         use = "pairwise.complete.obs"))
                     else NA_real_,
     cor_chron_sumd = if (dplyr::n() >= 5L)
                       suppressWarnings(stats::cor(
-                        n_chron_clean, sum_d,
+                        .shadow, sum_d,
                         use = "pairwise.complete.obs"))
                      else NA_real_,
     .groups = "drop"
@@ -107,9 +123,9 @@ pooled <- tibble::tibble(
   scope          = "All eras pooled",
   n              = nrow(df),
   n_with_gap     = sum(!is.na(df$gap_sum)),
-  cor_chron_gap  = stats::cor(df$n_chron_clean, df$gap_sum,
+  cor_chron_gap  = stats::cor(df$.shadow, df$gap_sum,
                               use = "pairwise.complete.obs"),
-  cor_chron_sumd = stats::cor(df$n_chron_clean, df$sum_d,
+  cor_chron_sumd = stats::cor(df$.shadow, df$sum_d,
                               use = "pairwise.complete.obs")
 )
 print(pooled)
@@ -119,30 +135,35 @@ cli::cli_h2("(c) Falsification refit")
 
 df_18 <- df |> dplyr::filter(year >= 1800)
 
-# Original spec (used in 02_heckman_baseline.R)
-sel_eq_orig    <- r ~ candidate + year + maddison_priority + n_chron_clean
+# Original spec (used in 02_heckman_baseline.R) -- selection equation uses
+# the active SHADOW_VAR (the variable being credibility-tested here).
+sel_eq_orig    <- as.formula(paste(
+  "r ~ candidate + year + maddison_priority +", SHADOW_VAR
+))
 out_eq_a       <- gap_sum ~ candidate + log_lagged_gdppc + polity +
                             currency_regime + year
 
-# Falsification 1: drop n_chron_clean only (literal reading of "dropping
-# n_chron_clean"). Maddison_priority remains in selection -- still excluded
-# from outcome -- so identification has one true exclusion left.
+# Falsification 1: drop SHADOW_VAR only. Maddison_priority remains in
+# selection -- still excluded from outcome -- so identification has one
+# true exclusion left.
 sel_eq_falsif1 <- r ~ candidate + year + maddison_priority
 
-# Falsification 2: drop n_chron_clean AND maddison_priority (strict reading
+# Falsification 2: drop SHADOW_VAR AND maddison_priority (strict reading
 # of "year as the only exclusion-like variable"). Year is in both equations,
 # so identification is now purely parametric (bivariate-normal functional
 # form). This is the most demanding falsification.
 sel_eq_falsif2 <- r ~ candidate + year
 
-# Reuse original gap_a_ml from heckman_fits.rds; refit only the falsifs.
-fits <- readRDS(here::here("data", "processed", "heckman_fits.rds"))
+# Reuse original gap_a_ml from the active SHADOW_VAR's heckman_fits cache;
+# refit only the falsifs.
+fits <- readRDS(phase2_cache_path("heckman_fits.rds", SHADOW_SUB,
+                                   ensure_dir = FALSE))
 fit_orig <- fits$gap_a_ml
 
-cli::cli_alert_info("Refitting Heckman without n_chron_clean (falsif 1) ...")
+cli::cli_alert_info("Refitting Heckman without {SHADOW_VAR} (falsif 1) ...")
 fit_falsif1 <- sampleSelection::selection(sel_eq_falsif1, out_eq_a,
                                           data = df_18, method = "ml")
-cli::cli_alert_info("Refitting Heckman without n_chron_clean AND maddison (falsif 2) ...")
+cli::cli_alert_info("Refitting Heckman without {SHADOW_VAR} AND maddison (falsif 2) ...")
 fit_falsif2 <- sampleSelection::selection(sel_eq_falsif2, out_eq_a,
                                           data = df_18, method = "ml")
 
@@ -182,11 +203,12 @@ build_falsif_row <- function(label, x, ref) {
 }
 
 falsif_tbl <- dplyr::bind_rows(
-  build_falsif_row("ORIGINAL: r ~ candidate + year + maddison + n_chron_clean",
+  build_falsif_row(sprintf("ORIGINAL: r ~ candidate + year + maddison + %s",
+                            SHADOW_VAR),
                    orig, orig),
-  build_falsif_row("FALSIF 1: drop n_chron_clean only",
+  build_falsif_row(sprintf("FALSIF 1: drop %s only", SHADOW_VAR),
                    falsif1, orig),
-  build_falsif_row("FALSIF 2: drop n_chron_clean AND maddison",
+  build_falsif_row(sprintf("FALSIF 2: drop %s AND maddison", SHADOW_VAR),
                    falsif2, orig)
 )
 print(falsif_tbl)
@@ -574,6 +596,17 @@ para2 <- if (verdict == "strong") {
 
 lines <- c(lines, "## Interpretation", "", para1, "", para2, "")
 
-out_path <- here::here("output", "tables", "03a_exclusion_diagnostic.md")
+# Phase-2: when SHADOW_VAR is set explicitly, swap the literal
+# "n_chron_clean" string in the narrative + interpretation text to the
+# active shadow name. The rendered markdown was authored against the
+# n_chron_clean baseline; this final-pass rewrite keeps the narrative
+# accurate for the 3-chron and 3-chron-raw runs without forcing every
+# sprintf above to thread SHADOW_VAR through. Live code uses SHADOW_VAR
+# directly; this only touches user-visible text.
+if (SHADOW_VAR != "n_chron_clean") {
+  lines <- gsub("n_chron_clean", SHADOW_VAR, lines, fixed = TRUE)
+}
+
+out_path <- phase2_output_path("03a_exclusion_diagnostic.md", SHADOW_SUB)
 writeLines(lines, out_path)
-cli::cli_alert_success("Wrote {.path output/tables/03a_exclusion_diagnostic.md}")
+cli::cli_alert_success("Wrote {.path {out_path}}")

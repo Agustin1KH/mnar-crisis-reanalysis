@@ -74,6 +74,17 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
+# Phase-2 SHADOW_VAR: the active shadow / exclusion variable. Reads from
+# the env var; defaults to n_chron_clean. Outputs and the cached gjrm_fits
+# get namespaced into output/tables/phase2_shadow_<sv>/ and
+# data/processed/phase2_shadow_<sv>/ when SHADOW_VAR is set explicitly.
+SHADOW       <- resolve_shadow_var()
+SHADOW_VAR   <- SHADOW$var
+SHADOW_SUB   <- SHADOW$subdir
+cli::cli_alert_info("Phase-2 SHADOW_VAR = {.val {SHADOW_VAR}} \\
+                    ({if (SHADOW$is_default) 'default' else 'explicit'}); \\
+                    output subdir = {.path {if (nzchar(SHADOW_SUB)) SHADOW_SUB else '(legacy flat)'}}.")
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -319,7 +330,8 @@ for (o in binary_outcomes) df_18[[o]] <- as.integer(df_18[[o]])
 checkmate::assert_data_frame(df_18, min.rows = 700L)
 checkmate::assert_true(sum(df_18$r) >= 260L && sum(df_18$r) <= 280L)
 
-heckman_fits <- readRDS(here::here("data", "processed", "heckman_fits.rds"))
+heckman_fits <- readRDS(phase2_cache_path("heckman_fits.rds", SHADOW_SUB,
+                                           ensure_dir = FALSE))
 heck_rho_a <- unname(heckman_fits$gap_a_ml$estimate[["rho"]])
 heck_tau_converted <- 2 / pi * asin(heck_rho_a)
 cli::cli_alert_info("Heckman MLE rho (gap_a_ml) = {round(heck_rho_a, 4)}; \\
@@ -330,7 +342,9 @@ cli::cli_alert_info("Heckman MLE rho (gap_a_ml) = {round(heck_rho_a, 4)}; \\
 # =============================================================================
 cli::cli_h1("SECTION 1: continuous outcome gap_sum spec A")
 
-sel_eq <- r ~ candidate + year + maddison_priority + n_chron_clean
+sel_eq <- as.formula(paste(
+  "r ~ candidate + year + maddison_priority +", SHADOW_VAR
+))
 out_eq <- gap_sum ~ candidate + log_lagged_gdppc + polity +
                      currency_regime + year
 
@@ -480,7 +494,7 @@ gjrm_fits <- list(
   )
 )
 
-gjrm_path <- here::here("data", "processed", "gjrm_fits.rds")
+gjrm_path <- phase2_cache_path("gjrm_fits.rds", SHADOW_SUB)
 saveRDS(gjrm_fits, gjrm_path)
 cli::cli_alert_success("Saved {.path {gjrm_path}}")
 
@@ -604,9 +618,9 @@ lines_c <- c(lines_c, "",
     "**LR disagreement.** See above; flagged.",
   ""
 )
-writeLines(lines_c,
-           here::here("output", "tables", "03_gjrm_continuous.md"))
-cli::cli_alert_success("Wrote output/tables/03_gjrm_continuous.md")
+cont_md_path <- phase2_output_path("03_gjrm_continuous.md", SHADOW_SUB)
+writeLines(lines_c, cont_md_path)
+cli::cli_alert_success("Wrote {.path {cont_md_path}}")
 
 # =============================================================================
 # OUTPUT 2: 03_gjrm_binary.md (one section per outcome)
@@ -708,9 +722,9 @@ for (o in binary_outcomes) {
   }
   lines_b <- c(lines_b, verdict_lines, "")
 }
-writeLines(lines_b,
-           here::here("output", "tables", "03_gjrm_binary.md"))
-cli::cli_alert_success("Wrote output/tables/03_gjrm_binary.md")
+bin_md_path <- phase2_output_path("03_gjrm_binary.md", SHADOW_SUB)
+writeLines(lines_b, bin_md_path)
+cli::cli_alert_success("Wrote {.path {bin_md_path}}")
 
 # =============================================================================
 # OUTPUT 3: 03_gjrm_tau_forest.png
@@ -772,9 +786,10 @@ forest_plot <- ggplot(fdf, aes(x = tau, y = label, color = copula)) +
     legend.position    = "bottom"
   )
 
-ggsave(here::here("output", "figures", "03_gjrm_tau_forest.png"),
-       forest_plot, width = 11, height = 9, dpi = 150)
-cli::cli_alert_success("Wrote output/figures/03_gjrm_tau_forest.png")
+forest_path <- phase2_output_path("03_gjrm_tau_forest.png", SHADOW_SUB,
+                                   kind = "figures")
+ggsave(forest_path, forest_plot, width = 11, height = 9, dpi = 150)
+cli::cli_alert_success("Wrote {.path {forest_path}}")
 
 # =============================================================================
 # OUTPUT 4: 03_interpretation.md
@@ -857,7 +872,7 @@ memo_text <- list(
     "binary outcome evidence, with `gap_sum` as supporting robustness. ",
     "GJRM bootstrap inference on Kendall's tau provides the formal ",
     "MNAR test that Heckman-probit ML could not deliver on this sample ",
-    "(it pinned rho at the boundary). The `n_chron_clean` exclusion ",
+    sprintf("(it pinned rho at the boundary). The `%s` exclusion ", SHADOW_VAR),
     "restriction is credibly behaved per Prompt 3d's diagnostics, so ",
     "the GJRM tau estimates can be interpreted as a sensitivity band ",
     "around the OLS/logit complete-case INCOME, not as a corrected ",
@@ -870,7 +885,7 @@ memo_text <- list(
     "across N, F, C90, J90); no binary outcome has bootstrap CI on tau ",
     "excluding zero.** The memo reframes around: 'the paper's INCOME ",
     "coefficient is robust to plausible MNAR structures across four ",
-    "parametric selection structures, with `n_chron_clean` as a well-",
+    sprintf("parametric selection structures, with `%s` as a well-", SHADOW_VAR),
     "behaved shadow variable.' The selection equation is real and the ",
     "dependence parameter is statistically distinguishable from zero ",
     "by likelihood-ratio, but in INCOME-coefficient terms the ",
@@ -990,24 +1005,18 @@ interp_lines <- c(
   sprintf("**Memo scenario chosen: `%s`.**", memo_scenario)
 )
 
-writeLines(interp_lines,
-           here::here("output", "tables", "03_interpretation.md"))
-cli::cli_alert_success("Wrote output/tables/03_interpretation.md")
+interp_path <- phase2_output_path("03_interpretation.md", SHADOW_SUB)
+writeLines(interp_lines, interp_path)
+cli::cli_alert_success("Wrote {.path {interp_path}}")
 
 # =============================================================================
 # Final hard-coded-paths sanity check
 # =============================================================================
-out_files <- c(
-  "output/tables/03_gjrm_continuous.md",
-  "output/tables/03_gjrm_binary.md",
-  "output/tables/03_interpretation.md",
-  "output/figures/03_gjrm_tau_forest.png"
-)
+out_files <- c(cont_md_path, bin_md_path, interp_path, forest_path)
 hard <- character()
 for (f in out_files[grepl("\\.md$", out_files)]) {
-  fp <- here::here(f)
-  if (file.exists(fp)) {
-    txt <- readLines(fp, warn = FALSE)
+  if (file.exists(f)) {
+    txt <- readLines(f, warn = FALSE)
     matches <- grep("/Users/", txt, value = TRUE, fixed = TRUE)
     if (length(matches)) hard <- c(hard, sprintf("%s: %s", f, matches))
   }

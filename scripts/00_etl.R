@@ -80,6 +80,19 @@ crisis <- crisis |>
     # if the chronology tag wasn't populated in the master, impute 1.
     n_chron_clean = dplyr::if_else(
       n_chronologies == 0L & Candidate == 0L, 1L, n_chronologies
+    ),
+    # Phase-2 alternative shadow variables. Both strip Laeven-Valencia (LV)
+    # from the count, so each ranges over {0, 1, 2, 3} rather than {0, 1, 2,
+    # 3, 4}. The "raw" version makes no fallback imputation; the "cleaned"
+    # version applies the same canonical-crisis fallback rule used by
+    # n_chron_clean (i.e. if zero-count and Candidate == 0, impute 1).
+    # Used by the SHADOW_VAR pipeline switch in scripts/{02,03,03a,03b,04,
+    # 05} to test whether stripping LV resolves the in-sample exclusion-
+    # restriction violation flagged in output/tables/03b_insample_exclusion_test.md.
+    # See files (1)/cursor-phase2-task-spec.md.
+    n_chron_3chron_raw = chron_BVX + chron_RR + chron_ST,
+    n_chron_3chron = dplyr::if_else(
+      n_chron_3chron_raw == 0L & Candidate == 0L, 1L, n_chron_3chron_raw
     )
   )
 
@@ -88,6 +101,26 @@ crisis <- crisis |>
   dplyr::mutate(
     iso3 = stringr::str_extract(`Crisis Code`, "^[A-Z]{3}"),
     maddison_priority = as.integer(iso3 %in% maddison_priority_iso())
+  )
+
+# ---- Phase-2 Task-2 dichotomized FX regime ---------------------------------
+# `Currency Regime` is the 15-level Reinhart-Rogoff IRR fine classification
+# (1 = no separate legal tender, ..., 15 = freely floating). It is ~54%
+# missing on the post-1800 sample; the original ETL keeps it as numeric and
+# the paper treats it as such. For Phase-2 Task 2 (NARFCS binary MNAR
+# sensitivity, see files (1)/cursor-phase2-task-spec.md), we add a binary
+# dichotomization at threshold 7, matching the paper's own Figure 4
+# treatment ("liberal vs fixed"; >=7 corresponds to managed floating and
+# above). Missingness pattern is identical to `Currency Regime` itself
+# (carries through one-to-one). Used by scripts/06_narfcs_binary_fx.R via
+# mice::mnar.logreg.
+crisis <- crisis |>
+  dplyr::mutate(
+    currency_regime_binary = dplyr::case_when(
+      is.na(`Currency Regime`)   ~ NA_integer_,
+      `Currency Regime` >= 7L    ~ 1L,
+      TRUE                        ~ 0L
+    )
   )
 
 # ---- Era bucketing (matches Table 1 in the paper) ----
@@ -137,14 +170,110 @@ out <- crisis |>
     rules_d = RULES_d,
     noi_d = NOI_d,
     other_d = OTHER_d,
-    chron_BVX, chron_LV, chron_RR, chron_ST,
+    # Chron columns are lowercase in the canonical analysis_data.csv
+    # (matches the convention used by scripts_py/* and the historical
+    # downstream R output). Internally they're stored uppercase per the
+    # paper's notation; we lowercase them on write.
+    chron_bvx = chron_BVX, chron_lv = chron_LV,
+    chron_rr  = chron_RR,  chron_st = chron_ST,
     n_chronologies, n_chron_clean,
-    maddison_priority
+    n_chron_3chron, n_chron_3chron_raw,
+    maddison_priority,
+    currency_regime_binary
   )
 
 dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+
+# ---- Phase-2 safety rail: backup + diff existing columns --------------------
+# Before overwriting analysis_data.csv, snapshot the current version (if any)
+# so we can verify the additive Phase-2 changes (n_chron_3chron and
+# n_chron_3chron_raw) don't perturb any pre-existing column. The backup is
+# written once and then left alone; if it already exists, we don't overwrite
+# it (the snapshot is the pre-Phase-2 ground truth).
+backup_path <- file.path(dirname(out_path), "analysis_data_pre_phase2.csv")
+prev_existed <- file.exists(out_path)
+if (prev_existed && !file.exists(backup_path)) {
+  file.copy(out_path, backup_path, overwrite = FALSE)
+  cat(sprintf("Backed up pre-Phase-2 CSV: %s\n", backup_path))
+}
+
 write.csv(out, out_path, row.names = FALSE)
 cat(sprintf("\nSaved: %s   (%d rows, %d cols)\n", out_path, nrow(out), ncol(out)))
+
+# ---- Diff check on existing columns ----------------------------------------
+# If a pre-Phase-2 backup is present, re-read the freshly written CSV and
+# the backup, then compare every column the backup has. Any difference is a
+# bug (the only intended Phase-2 changes are the two additive shadow
+# columns + their invariants). Halt loudly if so, except for known pre-
+# existing drifts in the ETL code (documented in EXPECTED_DIFFS_KNOWN).
+#
+# EXPECTED_DIFFS_KNOWN: pre-existing drifts between the on-disk
+# pre-Phase-2 CSV and the current ETL code that pre-date the SHADOW_VAR
+# work and do not affect any analysis number. Each entry must be
+# accompanied by a one-line reason. If you add an entry, also note it in
+# memo/memo.tex if the drift is reader-visible.
+EXPECTED_DIFFS_KNOWN <- c(
+  where = "UTF-8 encoding diff for 'Cote d'Ivoire' (row 636); cosmetic, no analysis impact.",
+  iso3  = "stringr::str_extract NA encoded as empty string in pre-Phase-2 CSV vs 'NA' literal now (rows 547, 818); maddison_priority membership test handles both identically.",
+  era   = "Era label format changed from '1800-69' to '1800_1869' style (cosmetic; cut() bins are unchanged so all groupings are identical)."
+)
+
+if (file.exists(backup_path)) {
+  prev <- read.csv(backup_path, stringsAsFactors = FALSE)
+  curr <- read.csv(out_path,    stringsAsFactors = FALSE)
+  shared_cols <- intersect(names(prev), names(curr))
+  diffs <- character()
+  for (col in shared_cols) {
+    p <- prev[[col]]; c <- curr[[col]]
+    # Compare with NA-aware equality.
+    same <- length(p) == length(c) &&
+            all((is.na(p) & is.na(c)) | (!is.na(p) & !is.na(c) & p == c))
+    if (!isTRUE(same)) diffs <- c(diffs, col)
+  }
+  new_cols <- setdiff(names(curr), names(prev))
+  dropped  <- setdiff(names(prev), names(curr))
+  cat(sprintf("Diff vs pre-Phase-2 backup: %d shared cols checked, %d differ; new cols added: %s; dropped: %s.\n",
+              length(shared_cols), length(diffs),
+              if (length(new_cols)) paste(new_cols, collapse = ", ") else "(none)",
+              if (length(dropped))  paste(dropped,  collapse = ", ") else "(none)"))
+
+  expected_known <- intersect(diffs, names(EXPECTED_DIFFS_KNOWN))
+  unexpected     <- setdiff(diffs, names(EXPECTED_DIFFS_KNOWN))
+
+  if (length(expected_known) > 0L) {
+    cat(sprintf("\nKnown pre-existing drifts (allow-listed; not Phase-2 caused):\n"))
+    for (col in expected_known) {
+      cat(sprintf("  - %-6s : %s\n", col, EXPECTED_DIFFS_KNOWN[[col]]))
+    }
+  }
+
+  if (length(unexpected) > 0L) {
+    stop(sprintf(
+      "Phase-2 ETL safety rail tripped: %d existing column(s) changed unexpectedly: %s. ",
+      length(unexpected), paste(unexpected, collapse = ", ")
+    ), "These are not in EXPECTED_DIFFS_KNOWN and may be a Phase-2 bug. ",
+       "Investigate before proceeding. Restore from ",
+       "data/processed/analysis_data_pre_phase2.csv if you need the original.",
+       call. = FALSE)
+  }
+  if (length(dropped) > 0L) {
+    stop(sprintf(
+      "Phase-2 ETL safety rail tripped: %d existing column(s) dropped: %s. ",
+      length(dropped), paste(dropped, collapse = ", ")
+    ), "The Phase-2 ETL change is meant to be additive only.",
+    call. = FALSE)
+  }
+
+  required_new <- c("n_chron_3chron_raw", "n_chron_3chron",
+                    "currency_regime_binary")
+  missing_new <- setdiff(required_new, new_cols)
+  if (length(missing_new) > 0L) {
+    stop(sprintf(
+      "Phase-2 ETL safety rail tripped: required new column(s) missing: %s.",
+      paste(missing_new, collapse = ", ")
+    ), call. = FALSE)
+  }
+}
 
 # ---- Contractual invariants (additive: assertions only) ---------------------
 # These guard the dataset shape that every downstream script relies on.
@@ -157,5 +286,16 @@ checkmate::assert_true(!anyDuplicated(out$crisis_code))
 checkmate::assert_integerish(out$year, lower = 33L, upper = 2019L, any.missing = FALSE)
 checkmate::assert_integerish(out$candidate, lower = 0L, upper = 1L, any.missing = FALSE)
 checkmate::assert_integerish(out$n_chron_clean, lower = 0L, upper = 4L, any.missing = FALSE)
+# Phase-2 additive invariants. Both shadows strip LV (max count = 3) and
+# either apply or skip the canonical-crisis fallback rule used by
+# n_chron_clean. Range {0, 1, 2, 3} for both; no missingness.
+checkmate::assert_integerish(out$n_chron_3chron_raw, lower = 0L, upper = 3L,
+                             any.missing = FALSE)
+checkmate::assert_integerish(out$n_chron_3chron, lower = 0L, upper = 3L,
+                             any.missing = FALSE)
+# currency_regime_binary inherits missingness from `Currency Regime` itself
+# (~54% missing post-1800); allow NA. Range {0, 1, NA}.
+checkmate::assert_integerish(out$currency_regime_binary, lower = 0L,
+                             upper = 1L, any.missing = TRUE)
 cat(sprintf("Invariants OK: nrow=%d, sum(r)=%d, year=[%d,%d]\n",
             nrow(out), sum(out$r), min(out$year), max(out$year)))

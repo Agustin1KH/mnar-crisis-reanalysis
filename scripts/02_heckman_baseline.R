@@ -43,6 +43,22 @@ suppressPackageStartupMessages({
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 # =============================================================================
+# Phase-2 SHADOW_VAR plumbing
+# =============================================================================
+# Read SHADOW_VAR from the environment (default "n_chron_clean" preserves
+# the legacy Phase-2 baseline). When SHADOW_VAR is set explicitly, all
+# outputs and the cached fits land under
+# `output/tables/phase2_shadow_<sv>/` and `data/processed/phase2_shadow_<sv>/`
+# respectively, so reruns under different shadows don't clobber each other
+# or the baseline. See R/utils.R::resolve_shadow_var().
+SHADOW       <- resolve_shadow_var()
+SHADOW_VAR   <- SHADOW$var
+SHADOW_SUB   <- SHADOW$subdir
+cli::cli_alert_info("Phase-2 SHADOW_VAR = {.val {SHADOW_VAR}} \\
+                    ({if (SHADOW$is_default) 'default' else 'explicit'}); \\
+                    output subdir = {.path {if (nzchar(SHADOW_SUB)) SHADOW_SUB else '(legacy flat)'}}.")
+
+# =============================================================================
 # Helper functions
 # =============================================================================
 
@@ -287,7 +303,10 @@ checkmate::assert_true(sum(df$r) >= 260L && sum(df$r) <= 280L)
 checkmate::assert_true(!anyDuplicated(df$crisis_code))
 checkmate::assert_integerish(df$candidate, lower = 0L, upper = 1L,
                              any.missing = FALSE)
-checkmate::assert_integerish(df$n_chron_clean, lower = 0L, upper = 4L,
+# Allow upper = 4 for n_chron_clean (the legacy 4-chron count) but only
+# require upper = 3 for the LV-stripped 3-chron variants. The shared
+# integerish + non-missing assertion is always true.
+checkmate::assert_integerish(df[[SHADOW_VAR]], lower = 0L, upper = 4L,
                              any.missing = FALSE)
 
 cli::cli_alert_info("Working sample: {nrow(df)} crises (year >= 1800), \\
@@ -298,7 +317,9 @@ cli::cli_alert_info("Working sample: {nrow(df)} crises (year >= 1800), \\
 # =============================================================================
 cli::cli_h1("SECTION 1: Continuous outcome (gap_sum)")
 
-sel_eq <- r ~ candidate + year + maddison_priority + n_chron_clean
+sel_eq <- as.formula(paste(
+  "r ~ candidate + year + maddison_priority +", SHADOW_VAR
+))
 out_eq_a <- gap_sum ~ candidate + log_lagged_gdppc + polity +
                        currency_regime + year
 out_eq_b <- gap_sum ~ candidate + log_lagged_gdppc + polity +
@@ -413,7 +434,7 @@ heckman_fits <- list(
   )
 )
 
-heckman_path <- here::here("data", "processed", "heckman_fits.rds")
+heckman_path <- phase2_cache_path("heckman_fits.rds", SHADOW_SUB)
 saveRDS(heckman_fits, heckman_path)
 cli::cli_alert_success("Saved {.path {heckman_path}}.")
 
@@ -426,7 +447,7 @@ cli::cli_h1("OUTPUT: diagnostics report")
 sel_pseudo_r2 <- mcfadden_pseudo_r2(sel_eq, df)
 sel_auc       <- selection_auc(sel_eq, df)
 sel_probit    <- glm(sel_eq, data = df, family = binomial("probit"))
-nchron_row    <- summary(sel_probit)$coefficients["n_chron_clean", ]
+nchron_row    <- summary(sel_probit)$coefficients[SHADOW_VAR, ]
 nchron_t      <- abs(nchron_row[["z value"]])
 weak_instrument <- nchron_t < 2
 
@@ -530,10 +551,11 @@ build_diag_md <- function() {
     "| :--- | ---: |",
     sprintf("| McFadden pseudo-R^2 (probit on r) | %s |", fmt_num(sel_pseudo_r2)),
     sprintf("| AUC (predicted P(r=1) vs observed r) | %s |", fmt_num(sel_auc)),
-    sprintf("| Coef on `n_chron_clean` (exclusion restriction) | %s |",
-            fmt_num(nchron_row[["Estimate"]])),
-    sprintf("| SE on `n_chron_clean` | %s |", fmt_num(nchron_row[["Std. Error"]])),
-    sprintf("| \\|t\\| on `n_chron_clean` | %s%s |",
+    sprintf("| Coef on `%s` (exclusion restriction) | %s |",
+            SHADOW_VAR, fmt_num(nchron_row[["Estimate"]])),
+    sprintf("| SE on `%s` | %s |", SHADOW_VAR,
+            fmt_num(nchron_row[["Std. Error"]])),
+    sprintf("| \\|t\\| on `%s` | %s%s |", SHADOW_VAR,
             fmt_num(nchron_t),
             if (weak_instrument) " **WEAK INSTRUMENT (\\|t\\| < 2)**" else ""),
     "",
@@ -636,9 +658,9 @@ build_diag_md <- function() {
   out
 }
 
-writeLines(build_diag_md(),
-           here::here("output", "tables", "02_heckman_diagnostics.md"))
-cli::cli_alert_success("Wrote {.path output/tables/02_heckman_diagnostics.md}")
+diag_md_path <- phase2_output_path("02_heckman_diagnostics.md", SHADOW_SUB)
+writeLines(build_diag_md(), diag_md_path)
+cli::cli_alert_success("Wrote {.path {diag_md_path}}")
 
 # =============================================================================
 # Output 2: 02_ols_vs_heckman_continuous.html and _binary.html
@@ -743,10 +765,10 @@ cont_html <- kableExtra::kbl(
                    interpretive_note_continuous, "**")) |>
   kableExtra::kable_styling(bootstrap_options = c("striped", "hover")) |>
   kableExtra::row_spec(0, bold = TRUE)
-writeLines(as.character(cont_html),
-           here::here("output", "tables", "02_ols_vs_heckman_continuous.html"))
-cli::cli_alert_success(
-  "Wrote {.path output/tables/02_ols_vs_heckman_continuous.html}")
+cont_html_path <- phase2_output_path("02_ols_vs_heckman_continuous.html",
+                                      SHADOW_SUB)
+writeLines(as.character(cont_html), cont_html_path)
+cli::cli_alert_success("Wrote {.path {cont_html_path}}")
 
 # ---- Binary panel ----
 bin_terms <- c("log_lagged_gdppc", "rho")
@@ -806,10 +828,9 @@ bin_html <- kableExtra::kbl(
                             full_width = FALSE) |>
   kableExtra::row_spec(0, bold = TRUE) |>
   kableExtra::scroll_box(width = "100%")
-writeLines(as.character(bin_html),
-           here::here("output", "tables", "02_ols_vs_heckman_binary.html"))
-cli::cli_alert_success(
-  "Wrote {.path output/tables/02_ols_vs_heckman_binary.html}")
+bin_html_path <- phase2_output_path("02_ols_vs_heckman_binary.html", SHADOW_SUB)
+writeLines(as.character(bin_html), bin_html_path)
+cli::cli_alert_success("Wrote {.path {bin_html_path}}")
 
 # =============================================================================
 # Output 3: 02_income_forest.png
@@ -899,9 +920,10 @@ forest_plot <- ggplot(fdf, aes(x = estimate, y = label, color = estimator)) +
     legend.position    = "bottom"
   )
 
-ggsave(here::here("output", "figures", "02_income_forest.png"),
-       forest_plot, width = 10, height = 7, dpi = 150)
-cli::cli_alert_success("Wrote {.path output/figures/02_income_forest.png}")
+forest_path <- phase2_output_path("02_income_forest.png", SHADOW_SUB,
+                                   kind = "figures")
+ggsave(forest_path, forest_plot, width = 10, height = 7, dpi = 150)
+cli::cli_alert_success("Wrote {.path {forest_path}}")
 
 # =============================================================================
 # Output 4: 02_interpretation.md (with explicit Scenario A/B/C/D routing)
@@ -1108,9 +1130,57 @@ interp_lines <- c(interp_lines, scenario_text[[scenario]], "",
   "   sample size."
 )
 
-writeLines(interp_lines,
-           here::here("output", "tables", "02_interpretation.md"))
-cli::cli_alert_success("Wrote {.path output/tables/02_interpretation.md}")
+interp_path <- phase2_output_path("02_interpretation.md", SHADOW_SUB)
+writeLines(interp_lines, interp_path)
+cli::cli_alert_success("Wrote {.path {interp_path}}")
+
+# =============================================================================
+# Phase-2 cross-shadow stitcher payload
+# =============================================================================
+# Persist a tiny machine-readable summary of the four gap_sum Heckman fits
+# (Spec A / B, ML / 2-step) plus the OLS complete-case baselines under the
+# current SHADOW_VAR. The stitcher (scripts/phase2_run_shadow_grid.R) reads
+# these CSVs across the three shadow runs and assembles the cross-shadow
+# comparison table for `output/tables/phase2_exclusion_across_shadows.md`.
+gap_summary <- function(label, res, sel_eq, out_eq, dat) {
+  fit <- res$fit
+  inc_l <- extract_income(fit) %||% list(coef = NA_real_, se = NA_real_,
+                                          t = NA_real_, p = NA_real_)
+  # NB: name the locals `inc_l` / `rho_l` (not `inc` / `rho`) -- tibble's
+  # data-mask makes column names shadow outer-scope variables of the same
+  # name inside *subsequent* args, so `rho = rho$rho` would later break
+  # `rho_se = rho$se`. Same gotcha as build_diag's bin_rho_tbl block.
+  rho_l <- extract_rho(fit)
+  cc_dat <- dat[dat$r == 1L, , drop = FALSE]
+  ols_complete <- lm(out_eq, data = cc_dat)
+  ols_inc_row  <- summary(ols_complete)$coefficients["log_lagged_gdppc", ]
+  tibble::tibble(
+    shadow      = SHADOW_VAR,
+    fit_label   = label,
+    spec        = if (grepl("_a_", label)) "A" else "B",
+    method      = res$method_used,
+    converged   = isTRUE(res$converged),
+    income_heck = inc_l$coef %||% NA_real_,
+    income_se   = inc_l$se   %||% NA_real_,
+    income_t    = inc_l$t    %||% NA_real_,
+    rho         = rho_l$rho %||% NA_real_,
+    rho_se      = rho_l$se  %||% NA_real_,
+    rho_t       = rho_l$t   %||% NA_real_,
+    income_ols_cc = ols_inc_row[["Estimate"]],
+    income_ols_se = ols_inc_row[["Std. Error"]],
+    n_ols_cc      = nobs(ols_complete)
+  )
+}
+
+gap_csv <- dplyr::bind_rows(
+  gap_summary("gap_a_ml",    res_gap_a_ml,    sel_eq, out_eq_a, df),
+  gap_summary("gap_a_2step", res_gap_a_2step, sel_eq, out_eq_a, df),
+  gap_summary("gap_b_ml",    res_gap_b_ml,    sel_eq, out_eq_b, df),
+  gap_summary("gap_b_2step", res_gap_b_2step, sel_eq, out_eq_b, df)
+)
+gap_csv_path <- phase2_output_path("02_gap_sum_heckman_summary.csv", SHADOW_SUB)
+write.csv(gap_csv, gap_csv_path, row.names = FALSE)
+cli::cli_alert_success("Wrote {.path {gap_csv_path}}")
 
 cli::cli_h1("Phase 2 baseline complete")
 cli::cli_alert_info("Scenario: {.strong {scenario}}")

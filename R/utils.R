@@ -47,3 +47,54 @@ report_selection <- function(df, regs, year_col = "year") {
   ))
   invisible(list(complete = complete, dropped = dropped))
 }
+
+#' Phase-2 SHADOW_VAR resolver.
+#'
+#' Returns a list with `var` (the chosen shadow-variable column name),
+#' `is_default` (whether the SHADOW_VAR env var was unset, in which case we
+#' fall back to "n_chron_clean"), and `subdir` (the relative path under
+#' `output/tables/` to namespace Phase-2 outputs into; empty string when
+#' is_default = TRUE so legacy outputs don't move). Also validates the
+#' chosen column is one of the three expected shadows.
+#'
+#' Usage in each consumer script:
+#'   sv  <- resolve_shadow_var()
+#'   subdir <- sv$subdir   # "" or e.g. "phase2_shadow_n_chron_3chron_raw"
+#'   sel_eq <- as.formula(paste0("r ~ candidate + year + maddison_priority + ", sv$var))
+resolve_shadow_var <- function(allowed = c("n_chron_clean",
+                                            "n_chron_3chron",
+                                            "n_chron_3chron_raw")) {
+  raw <- Sys.getenv("SHADOW_VAR", unset = "")
+  is_default <- !nzchar(raw)
+  var <- if (is_default) "n_chron_clean" else raw
+  if (!var %in% allowed) {
+    stop(sprintf("SHADOW_VAR='%s' is not in {%s}; refusing to proceed.",
+                 var, paste(allowed, collapse = ", ")), call. = FALSE)
+  }
+  subdir <- if (is_default) "" else paste0("phase2_shadow_", var)
+  list(var = var, is_default = is_default, subdir = subdir)
+}
+
+#' Phase-2 output-path helper. Concatenates `output/tables/<subdir>/<file>`
+#' (or `output/tables/<file>` when subdir is ""), creating the directory
+#' if needed. Pass either a single filename or a relative path.
+phase2_output_path <- function(file, subdir = "", kind = c("tables", "figures"),
+                                ensure_dir = TRUE) {
+  kind <- match.arg(kind)
+  parts <- c("output", kind)
+  if (nzchar(subdir)) parts <- c(parts, subdir)
+  dir <- do.call(here::here, as.list(parts))
+  if (ensure_dir) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  file.path(dir, file)
+}
+
+#' Cache-path counterpart for phase2_output_path: Phase-2 RDS / cached
+#' fits go under `data/processed/<subdir>/`. Same defaulting behaviour
+#' (subdir "" -> the existing flat layout).
+phase2_cache_path <- function(file, subdir = "", ensure_dir = TRUE) {
+  parts <- c("data", "processed")
+  if (nzchar(subdir)) parts <- c(parts, subdir)
+  dir <- do.call(here::here, as.list(parts))
+  if (ensure_dir) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  file.path(dir, file)
+}

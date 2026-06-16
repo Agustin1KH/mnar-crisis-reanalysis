@@ -84,6 +84,18 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
+# Phase-2 SHADOW_VAR. The MICE-MNAR Heckman-imputation selection equation
+# (excl_vars below) uses the active shadow; cached mids and all output
+# paths get namespaced when SHADOW_VAR is set explicitly. The MAR
+# sensitivity arm uses the same predictor matrix so the contrast is
+# purely about the continuous-variable assumption.
+SHADOW       <- resolve_shadow_var()
+SHADOW_VAR   <- SHADOW$var
+SHADOW_SUB   <- SHADOW$subdir
+cli::cli_alert_info("Phase-2 SHADOW_VAR = {.val {SHADOW_VAR}} \\
+                    ({if (SHADOW$is_default) 'default' else 'explicit'}); \\
+                    output subdir = {.path {if (nzchar(SHADOW_SUB)) SHADOW_SUB else '(legacy flat)'}}.")
+
 # Reproducibility seed (also passed to mice).
 SEED <- 1089L
 
@@ -116,7 +128,7 @@ cli::cli_alert_info(
 # function of year; chron_* and n_chronologies dropped as redundant of
 # n_chron_clean; r and noi_d dropped (mechanism / sentinel columns).
 keep_cols <- c(
-  "year", "candidate", "maddison_priority", "n_chron_clean",
+  "year", "candidate", "maddison_priority", SHADOW_VAR,
   "log_lagged_gdppc", "polity", "currency_regime", "debt", "exp",
   "gap_sum",
   "guarantees_d", "lending_d", "capital_injections_d",
@@ -144,7 +156,7 @@ cli::cli_alert_info(
 # SECTION 1: MNAR imputation (hecknorm2step + polyreg)
 # =============================================================================
 
-mnar_path <- here::here("data", "processed", "mice_mnar.rds")
+mnar_path <- phase2_cache_path("mice_mnar.rds", SHADOW_SUB)
 
 if (file.exists(mnar_path)) {
   cli::cli_alert_info("Loading cached MNAR mids: {.path {mnar_path}}")
@@ -159,7 +171,7 @@ if (file.exists(mnar_path)) {
   # mice's canonical advice is "richer outcome equation than substantive
   # model"; Van Buuren 2018 ch. 6).
   JM <- generate_JointModelEq(varMNAR, df_mice)
-  excl_vars <- c("n_chron_clean", "maddison_priority", "year", "candidate")
+  excl_vars <- c(SHADOW_VAR, "maddison_priority", "year", "candidate")
   out_pool  <- c(
     "year", "candidate", "log_lagged_gdppc", "polity", "currency_regime",
     "debt", "exp", "gap_sum",
@@ -213,7 +225,7 @@ stopifnot(mids_mnar$m >= 10L)
 # SECTION 2: MAR sensitivity imputation (pmm + polyreg)
 # =============================================================================
 
-mar_path <- here::here("data", "processed", "mice_mar.rds")
+mar_path <- phase2_cache_path("mice_mar.rds", SHADOW_SUB)
 
 if (file.exists(mar_path)) {
   cli::cli_alert_info("Loading cached MAR mids: {.path {mar_path}}")
@@ -256,7 +268,8 @@ stopifnot(inherits(mids_mar, "mids"))
 # =============================================================================
 cli::cli_h2("Convergence diagnostics: density of imputed vs observed")
 
-dens_path <- here::here("output", "figures", "04_mice_convergence.png")
+dens_path <- phase2_output_path("04_mice_convergence.png", SHADOW_SUB,
+                                  kind = "figures")
 
 # densityplot on a mids returns a lattice trellis. Save via png+print.
 # Use a 2x3 grid so all 5 MNAR-imputed continuous vars fit; currency_regime
@@ -363,7 +376,8 @@ cli::cli_h2("Loading complete-case OLS / logit + Heckman MLE comparators")
 
 t3_ols      <- readRDS(here::here("data", "processed", "table3_ols_fits.rds"))
 t2_log      <- readRDS(here::here("data", "processed", "table2_logit_fits.rds"))
-heck_fits   <- readRDS(here::here("data", "processed", "heckman_fits.rds"))
+heck_fits   <- readRDS(phase2_cache_path("heckman_fits.rds", SHADOW_SUB,
+                                          ensure_dir = FALSE))
 
 # Complete-case OLS, spec A and B, pull INCOME row
 get_income_lm <- function(fit) {
@@ -521,9 +535,9 @@ for (label in names(fallbacks)) {
     ""
   )
 }
-writeLines(fb_lines,
-           here::here("output", "tables", "04_mice_fallback_log.md"))
-cli::cli_alert_success("Wrote {.path output/tables/04_mice_fallback_log.md}")
+fb_path <- phase2_output_path("04_mice_fallback_log.md", SHADOW_SUB)
+writeLines(fb_lines, fb_path)
+cli::cli_alert_success("Wrote {.path {fb_path}}")
 
 # =============================================================================
 # SECTION 7: 04_mar_vs_mnar_comparison.md
@@ -710,9 +724,15 @@ mvm_lines <- c(mvm_lines, "",
   "interpretively robust comparisons in the table.",
   ""
 )
-writeLines(mvm_lines,
-           here::here("output", "tables", "04_mar_vs_mnar_comparison.md"))
-cli::cli_alert_success("Wrote {.path output/tables/04_mar_vs_mnar_comparison.md}")
+# Phase-2: swap "n_chron_clean" -> SHADOW_VAR in the narrative when running
+# under an explicit shadow (live code already uses SHADOW_VAR; this only
+# rewrites user-visible text).
+if (SHADOW_VAR != "n_chron_clean") {
+  mvm_lines <- gsub("n_chron_clean", SHADOW_VAR, mvm_lines, fixed = TRUE)
+}
+mvm_path <- phase2_output_path("04_mar_vs_mnar_comparison.md", SHADOW_SUB)
+writeLines(mvm_lines, mvm_path)
+cli::cli_alert_success("Wrote {.path {mvm_path}}")
 
 # =============================================================================
 # SECTION 8: 04_mice_mnar_results.md (Panel A continuous + Panel B binary)
@@ -819,9 +839,12 @@ results_lines <- c(results_lines, "",
   binary_narratives, ""
 )
 
-writeLines(results_lines,
-           here::here("output", "tables", "04_mice_mnar_results.md"))
-cli::cli_alert_success("Wrote {.path output/tables/04_mice_mnar_results.md}")
+if (SHADOW_VAR != "n_chron_clean") {
+  results_lines <- gsub("n_chron_clean", SHADOW_VAR, results_lines, fixed = TRUE)
+}
+results_path <- phase2_output_path("04_mice_mnar_results.md", SHADOW_SUB)
+writeLines(results_lines, results_path)
+cli::cli_alert_success("Wrote {.path {results_path}}")
 
 # =============================================================================
 # SECTION 9: 04_mice_forest.png (two-panel forest plot)
@@ -913,7 +936,8 @@ p_b <- ggplot(forest_b, aes(x = estimate, y = row, color = estimator)) +
   theme(legend.position = "bottom",
         panel.grid.major.y = element_blank())
 
-forest_path <- here::here("output", "figures", "04_mice_forest.png")
+forest_path <- phase2_output_path("04_mice_forest.png", SHADOW_SUB,
+                                    kind = "figures")
 forest_combined <- cowplot::plot_grid(p_a, p_b, ncol = 1,
                                       rel_heights = c(1, 2),
                                       align = "v", axis = "lr")
@@ -1205,8 +1229,11 @@ interp_lines <- c(
   ""
 )
 
-writeLines(interp_lines,
-           here::here("output", "tables", "04_mice_mnar_interpretation.md"))
-cli::cli_alert_success("Wrote {.path output/tables/04_mice_mnar_interpretation.md}")
+if (SHADOW_VAR != "n_chron_clean") {
+  interp_lines <- gsub("n_chron_clean", SHADOW_VAR, interp_lines, fixed = TRUE)
+}
+interp_path <- phase2_output_path("04_mice_mnar_interpretation.md", SHADOW_SUB)
+writeLines(interp_lines, interp_path)
+cli::cli_alert_success("Wrote {.path {interp_path}}")
 
 cli::cli_h1("Phase 4a complete")
